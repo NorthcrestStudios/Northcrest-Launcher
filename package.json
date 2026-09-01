@@ -1,0 +1,49 @@
+{
+  "name": "northcrest-launcher",
+  "productName": "Northcrest Launcher",
+  "version": "0.0.1",
+  "description": "Launcher officiel de Northcrest Studios — distribution, mises à jour, communauté et Northcrest ID.",
+  "main": "electron/main.js",
+  "author": {
+    "name": "Northcrest Entertainment",
+    "email": "contact@northcrest-entertainment.com"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron . --dev\"",
+    "build": "tsc --noEmit && vite build",
+    "start": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.northcrest.launcher",
+    "productName": "Northcrest Launcher",
+    "files": [
+      "electron/**/*",
+      "app/dist/**/*",
+      "app/assets/**/*",
+      "package.json"
+    ],
+    "directories": { "output": "dist" },
+    "win": { "target": "nsis", "icon": "app/assets/icons/app-icon.ico" },
+    "mac": { "target": "dmg", "icon": "app/assets/icons/app-icon.icns" },
+    "linux": { "target": "AppImage", "icon": "app/assets/icons/app-icon.png" }
+  }
+}

@@ -1,7 +1,7 @@
 {
   "name": "northcrest-launcher",
   "productName": "Northcrest Launcher",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Launcher officiel de Northcrest Studios — distribution, mises à jour, communauté et Northcrest ID.",
   "main": "electron/main.js",
   "author": {

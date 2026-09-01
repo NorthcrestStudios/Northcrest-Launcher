@@ -86,6 +86,8 @@ export type PresenceStatus =
   | 'offline'
   | 'ingame';
 
+export type Presence = PresenceStatus;
+
 
 /*
  * ==========================================================

@@ -18,6 +18,7 @@
     "dist": "npm run build && electron-builder"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -41,9 +42,20 @@
       "app/assets/**/*",
       "package.json"
     ],
-    "directories": { "output": "dist" },
-    "win": { "target": "nsis", "icon": "app/assets/icons/app-icon.ico" },
-    "mac": { "target": "dmg", "icon": "app/assets/icons/app-icon.icns" },
-    "linux": { "target": "AppImage", "icon": "app/assets/icons/app-icon.png" }
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "app/assets/icons/app-icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "app/assets/icons/app-icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "app/assets/icons/app-icon.png"
+    }
   }
 }

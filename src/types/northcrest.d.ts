@@ -56,10 +56,15 @@ export interface NorthcrestBridge
         getLibrary(): Promise<unknown[]>;
 
         launch(
-            gameId: string
+            gameId: string,
+            launchCode: string
         ): Promise<{
             launched: boolean;
             gameId: string;
+            pid?: number;
+            error?: string;
+            message?: string;
+            path?: string;
         }>;
     };
 }

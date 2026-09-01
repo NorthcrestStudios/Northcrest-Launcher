@@ -1,15 +1,15 @@
 'use strict';
 
 /**
- * Northcrest Launcher — Processus principal (Main Process)
- * ----------------------------------------------------------
- * Ce fichier est le point d'entrée d'Electron. Il gère :
- *  - la création et le cycle de vie de la fenêtre principale
- *  - la configuration de sécurité (contextIsolation, sandbox, CSP)
- *  - le menu applicatif natif
- *  - les canaux IPC exposés au renderer via le preload
- *  - les fonctionnalités natives du launcher
- *  - le lancement de Northcrest.exe
+ * Northcrest Launcher — Processus principal Electron
+ *
+ * Gère :
+ * - la fenêtre principale
+ * - les préférences utilisateur
+ * - les canaux IPC
+ * - le lancement de BlackBridge
+ * - la sécurité Electron
+ * - les mises à jour automatiques du Launcher
  */
 
 const {
@@ -22,185 +22,130 @@ const {
   nativeTheme
 } = require('electron');
 
-
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { autoUpdater } = require('electron-updater');
 
 
-/**
- * ---------------------------------------------------------------------------
- * Constantes globales
- * ---------------------------------------------------------------------------
- */
+/* ============================================================================
+ * CONSTANTES
+ * ========================================================================== */
 
-const IS_DEV =
-  process.argv.includes('--dev');
+const IS_DEV = process.argv.includes('--dev');
+const IS_MAC = process.platform === 'darwin';
+const IS_WINDOWS = process.platform === 'win32';
 
+const APP_ROOT = path.join(__dirname, '..');
 
-const IS_MAC =
-  process.platform === 'darwin';
+const RENDERER_ENTRY = path.join(
+  APP_ROOT,
+  'app',
+  'dist',
+  'index.html'
+);
 
+const DEV_SERVER_URL = 'http://localhost:5173';
 
-const IS_WINDOWS =
-  process.platform === 'win32';
+const PRELOAD_SCRIPT = path.join(
+  __dirname,
+  'preload.js'
+);
 
-
-const APP_ROOT =
-  path.join(
-    __dirname,
-    '..'
-  );
-
-
-const RENDERER_ENTRY =
-  path.join(
-    APP_ROOT,
-    'app',
-    'dist',
-    'index.html'
-  );
+const MIN_WINDOW_WIDTH = 1180;
+const MIN_WINDOW_HEIGHT = 720;
 
 
-const DEV_SERVER_URL =
-  'http://localhost:5173';
+/* ============================================================================
+ * DONNÉES UTILISATEUR
+ * ========================================================================== */
+
+const USER_DATA_DIR = app.getPath('userData');
+
+const SETTINGS_FILE = path.join(
+  USER_DATA_DIR,
+  'northcrest-settings.json'
+);
 
 
-const PRELOAD_SCRIPT =
-  path.join(
-    __dirname,
-    'preload.js'
-  );
+/* ============================================================================
+ * CONFIGURATION PAR DÉFAUT
+ * ========================================================================== */
 
+const DEFAULT_SETTINGS = {
+  theme: 'dark',
 
-const MIN_WINDOW_WIDTH =
-  1180;
+  language: 'fr-FR',
 
+  downloadFolder: path.join(
+    os.homedir(),
+    'Northcrest Games'
+  ),
 
-const MIN_WINDOW_HEIGHT =
-  720;
+  autoUpdateGames: true,
 
+  autoUpdateLauncher: true,
 
-/**
- * Dossier de configuration utilisateur.
- */
-
-const USER_DATA_DIR =
-  app.getPath(
-    'userData'
-  );
-
-
-const SETTINGS_FILE =
-  path.join(
-    USER_DATA_DIR,
-    'northcrest-settings.json'
-  );
-
-
-const DEFAULT_SETTINGS =
-{
-  theme:
-    'dark',
-
-  language:
-    'fr-FR',
-
-  downloadFolder:
-    path.join(
-      os.homedir(),
-      'Northcrest Games'
-    ),
-
-  autoUpdateGames:
-    true,
-
-  autoUpdateLauncher:
-    true
+  displayMode: 'windowed'
 };
 
 
-/**
- * ---------------------------------------------------------------------------
- * État global
- * ---------------------------------------------------------------------------
- */
+/* ============================================================================
+ * ÉTAT GLOBAL
+ * ========================================================================== */
 
 /** @type {BrowserWindow | null} */
-let mainWindow =
-  null;
+let mainWindow = null;
+
+let currentSettings = {
+  ...DEFAULT_SETTINGS
+};
 
 
-let currentSettings =
-  DEFAULT_SETTINGS;
+/* ============================================================================
+ * UTILITAIRES
+ * ========================================================================== */
 
-
-/**
- * ---------------------------------------------------------------------------
- * Gestion des préférences
- * ---------------------------------------------------------------------------
- */
-
-function ensureUserDataDir()
-{
-  if (
-    !fs.existsSync(
-      USER_DATA_DIR
-    )
-  )
-  {
-    fs.mkdirSync(
-      USER_DATA_DIR,
-      {
-        recursive:
-          true
-      }
+function ensureUserDataDir() {
+  try {
+    if (!fs.existsSync(USER_DATA_DIR)) {
+      fs.mkdirSync(USER_DATA_DIR, {
+        recursive: true
+      });
+    }
+  } catch (error) {
+    console.error(
+      '[Northcrest] Impossible de créer le dossier utilisateur.',
+      error
     );
   }
 }
 
 
-function loadSettings()
-{
-  try
-  {
+function loadSettings() {
+  try {
     ensureUserDataDir();
 
+    if (fs.existsSync(SETTINGS_FILE)) {
+      const raw = fs.readFileSync(
+        SETTINGS_FILE,
+        'utf-8'
+      );
 
-    if (
-      fs.existsSync(
-        SETTINGS_FILE
-      )
-    )
-    {
-      const raw =
-        fs.readFileSync(
-          SETTINGS_FILE,
-          'utf-8'
-        );
-
-
-      const parsed =
-        JSON.parse(
-          raw
-        );
-
+      const parsed = JSON.parse(raw);
 
       return {
         ...DEFAULT_SETTINGS,
         ...parsed
       };
     }
-  }
-  catch (error)
-  {
+  } catch (error) {
     console.error(
-      '[Northcrest] Impossible de lire les préférences, retour aux valeurs par défaut.',
+      '[Northcrest] Impossible de lire les préférences.',
       error
     );
   }
-
 
   return {
     ...DEFAULT_SETTINGS
@@ -208,14 +153,9 @@ function loadSettings()
 }
 
 
-function saveSettings(
-  settings
-)
-{
-  try
-  {
+function saveSettings(settings) {
+  try {
     ensureUserDataDir();
-
 
     fs.writeFileSync(
       SETTINGS_FILE,
@@ -227,160 +167,452 @@ function saveSettings(
       'utf-8'
     );
 
-
     return true;
-  }
-  catch (error)
-  {
+  } catch (error) {
     console.error(
       '[Northcrest] Impossible d’enregistrer les préférences.',
       error
     );
-
 
     return false;
   }
 }
 
 
+function isExternalUrl(url) {
+  return /^https?:\/\//i.test(url);
+}
+
+
+/* ============================================================================
+ * BLACKBRIDGE
+ * ========================================================================== */
+
 /**
- * ---------------------------------------------------------------------------
- * Création de la fenêtre principale
- * ---------------------------------------------------------------------------
+ * Build Unreal local de développement.
  */
+const DEVELOPMENT_GAME_DIRECTORY =
+  'C:\\Users\\stan4\\OneDrive\\Documents\\Unreal Projects\\GothamCity 5.7\\Saved\\NorthcrestBuilds\\Development\\Windows';
 
-function createMainWindow()
-{
-  mainWindow =
-    new BrowserWindow({
-      width:
-        1440,
 
-      height:
-        900,
+function getBlackBridgeDirectory() {
+  if (IS_DEV) {
+    return DEVELOPMENT_GAME_DIRECTORY;
+  }
 
-      minWidth:
-        MIN_WINDOW_WIDTH,
+  return path.join(
+    currentSettings.downloadFolder,
+    'BlackBridge'
+  );
+}
 
-      minHeight:
-        MIN_WINDOW_HEIGHT,
 
-      show:
-        true,
+function getBlackBridgeExecutable() {
+  return path.join(
+    getBlackBridgeDirectory(),
+    'Northcrest.exe'
+  );
+}
 
-      backgroundColor:
-        '#07070d',
 
-      title:
-        'Northcrest Launcher',
+function isBlackBridgeInstalled() {
+  return fs.existsSync(
+    getBlackBridgeExecutable()
+  );
+}
 
-      frame:
-        !IS_WINDOWS,
 
-      titleBarStyle:
-        IS_WINDOWS
-          ? 'hidden'
-          : 'hiddenInset',
+/* ============================================================================
+ * LAUNCH TICKET
+ * ========================================================================== */
 
-      titleBarOverlay:
-        IS_WINDOWS
-          ? {
-              color:
-                '#07070d',
+function isValidLaunchCode(launchCode) {
+  if (typeof launchCode !== 'string') {
+    return false;
+  }
 
-              symbolColor:
-                '#9d7bff',
+  return /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(
+    launchCode
+  );
+}
 
-              height:
-                44
-            }
-          : undefined,
 
-      icon:
-        path.join(
-          APP_ROOT,
-          'app',
-          'assets',
-          'icons',
-          'app-icon.png'
-        ),
+/* ============================================================================
+ * MISES À JOUR AUTOMATIQUES
+ * ========================================================================== */
 
-      webPreferences:
-      {
-        preload:
-          PRELOAD_SCRIPT,
+/**
+ * Configure electron-updater.
+ *
+ * En production :
+ * - recherche automatiquement les mises à jour
+ * - télécharge automatiquement la nouvelle version
+ * - installe la nouvelle version au prochain redémarrage
+ *
+ * En développement :
+ * - aucune recherche de mise à jour
+ */
+function setupAutoUpdater() {
+  if (IS_DEV) {
+    console.log(
+      '[Northcrest] Mise à jour automatique désactivée en développement.'
+    );
 
-        contextIsolation:
-          true,
+    return;
+  }
 
-        nodeIntegration:
-          false,
+  if (!currentSettings.autoUpdateLauncher) {
+    console.log(
+      '[Northcrest] Mise à jour automatique désactivée dans les paramètres.'
+    );
 
-        sandbox:
-          true,
+    return;
+  }
 
-        spellcheck:
-          false,
+  /**
+   * Téléchargement automatique.
+   */
+  autoUpdater.autoDownload = true;
 
-        devTools:
-          true
+  /**
+   * Installation automatique au prochain lancement.
+   */
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  /**
+   * Évite que l'application soit redémarrée
+   * automatiquement sans contrôle explicite.
+   */
+  autoUpdater.autoRunAppAfterInstall = true;
+
+  /**
+   * Logs.
+   */
+  autoUpdater.on(
+    'checking-for-update',
+    () => {
+      console.log(
+        '[Northcrest] Recherche de mise à jour...'
+      );
+    }
+  );
+
+  autoUpdater.on(
+    'update-available',
+    (info) => {
+      console.log(
+        '[Northcrest] Mise à jour disponible :',
+        info.version
+      );
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(
+          'updater:update-available',
+          {
+            version: info.version
+          }
+        );
       }
-    });
+    }
+  );
+
+  autoUpdater.on(
+    'update-not-available',
+    (info) => {
+      console.log(
+        '[Northcrest] Launcher déjà à jour :',
+        info.version
+      );
+    }
+  );
+
+  autoUpdater.on(
+    'download-progress',
+    (progress) => {
+      console.log(
+        `[Northcrest] Téléchargement mise à jour : ${progress.percent.toFixed(1)}%`
+      );
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(
+          'updater:download-progress',
+          {
+            percent: progress.percent,
+            transferred: progress.transferred,
+            total: progress.total,
+            bytesPerSecond: progress.bytesPerSecond
+          }
+        );
+      }
+    }
+  );
+
+  autoUpdater.on(
+    'update-downloaded',
+    (info) => {
+      console.log(
+        '[Northcrest] Mise à jour téléchargée :',
+        info.version
+      );
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(
+          'updater:update-downloaded',
+          {
+            version: info.version
+          }
+        );
+      }
+
+      /**
+       * La mise à jour sera installée automatiquement
+       * lorsque l'utilisateur quittera le Launcher.
+       */
+    }
+  );
+
+  autoUpdater.on(
+    'error',
+    (error) => {
+      console.error(
+        '[Northcrest] Erreur de mise à jour :',
+        error
+      );
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(
+          'updater:error',
+          {
+            message:
+              error?.message ??
+              'Erreur inconnue pendant la mise à jour.'
+          }
+        );
+      }
+    }
+  );
+
+  /**
+   * Recherche après le démarrage du Launcher.
+   *
+   * Le délai évite de lancer la vérification
+   * pendant le chargement initial de l'application.
+   */
+  setTimeout(
+    () => {
+      autoUpdater
+        .checkForUpdates()
+        .catch(
+          (error) => {
+            console.error(
+              '[Northcrest] Impossible de vérifier les mises à jour.',
+              error
+            );
+          }
+        );
+    },
+    5000
+  );
+}
 
 
-  mainWindow.show();
+/**
+ * Vérification manuelle d'une mise à jour.
+ */
+async function checkForUpdates() {
+  if (IS_DEV) {
+    return {
+      success: false,
+      reason: 'development'
+    };
+  }
+
+  if (!currentSettings.autoUpdateLauncher) {
+    return {
+      success: false,
+      reason: 'disabled'
+    };
+  }
+
+  try {
+    const result =
+      await autoUpdater.checkForUpdates();
+
+    return {
+      success: true,
+      updateAvailable:
+        Boolean(result?.updateInfo)
+    };
+  } catch (error) {
+    console.error(
+      '[Northcrest] Vérification manuelle échouée.',
+      error
+    );
+
+    return {
+      success: false,
+      reason: 'error',
+      message:
+        error?.message ??
+        'Impossible de vérifier les mises à jour.'
+    };
+  }
+}
+
+
+/**
+ * Installe immédiatement une mise à jour déjà téléchargée.
+ */
+function installUpdate() {
+  if (IS_DEV) {
+    return false;
+  }
+
+  try {
+    autoUpdater.quitAndInstall(
+      false,
+      true
+    );
+
+    return true;
+  } catch (error) {
+    console.error(
+      '[Northcrest] Impossible d’installer la mise à jour.',
+      error
+    );
+
+    return false;
+  }
+}
+
+
+/* ============================================================================
+ * FENÊTRE PRINCIPALE
+ * ========================================================================== */
+
+function createMainWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1440,
+
+    height: 900,
+
+    minWidth: MIN_WINDOW_WIDTH,
+
+    minHeight: MIN_WINDOW_HEIGHT,
+
+    show: false,
+
+    backgroundColor: '#07070d',
+
+    title: 'Northcrest Launcher',
+
+    frame: !IS_WINDOWS,
+
+    titleBarStyle:
+      IS_WINDOWS
+        ? 'hidden'
+        : 'hiddenInset',
+
+    titleBarOverlay:
+      IS_WINDOWS
+        ? {
+            color: '#07070d',
+            symbolColor: '#9d7bff',
+            height: 44
+          }
+        : undefined,
+
+    icon: path.join(
+      APP_ROOT,
+      'app',
+      'assets',
+      'icons',
+      'app-icon.png'
+    ),
+
+    webPreferences: {
+      preload: PRELOAD_SCRIPT,
+
+      contextIsolation: true,
+
+      nodeIntegration: false,
+
+      sandbox: true,
+
+      spellcheck: false,
+
+      devTools: true
+    }
+  });
+
+
+  /**
+   * Mode d'affichage sauvegardé.
+   */
+  if (
+    currentSettings.displayMode ===
+    'fullscreen'
+  ) {
+    mainWindow.setFullScreen(true);
+  }
+
+
+  /**
+   * Afficher uniquement lorsque la fenêtre
+   * est prête.
+   */
+  mainWindow.once(
+    'ready-to-show',
+    () => {
+      if (
+        mainWindow &&
+        !mainWindow.isDestroyed()
+      ) {
+        mainWindow.show();
+      }
+    }
+  );
 
 
   /**
    * DevTools uniquement en développement.
    */
-
-  if (IS_DEV)
-  {
+  if (IS_DEV) {
     mainWindow.webContents.openDevTools({
-      mode:
-        'detach'
+      mode: 'detach'
     });
   }
 
 
-  if (IS_DEV)
-  {
+  /**
+   * Chargement du renderer.
+   */
+  if (IS_DEV) {
     console.log(
       '[Northcrest] Chargement du serveur Vite :',
       DEV_SERVER_URL
     );
 
-
     mainWindow
-      .loadURL(
-        DEV_SERVER_URL
-      )
+      .loadURL(DEV_SERVER_URL)
       .catch(
-        (error) =>
-        {
+        (error) => {
           console.error(
-            '[Northcrest] Impossible de charger le serveur Vite.',
+            '[Northcrest] Impossible de charger Vite.',
             error
           );
         }
       );
-  }
-  else
-  {
+  } else {
     console.log(
       '[Northcrest] Chargement de :',
       RENDERER_ENTRY
     );
 
-
     mainWindow
-      .loadFile(
-        RENDERER_ENTRY
-      )
+      .loadFile(RENDERER_ENTRY)
       .catch(
-        (error) =>
-        {
+        (error) => {
           console.error(
             '[Northcrest] Impossible de charger le renderer.',
             error
@@ -391,27 +623,16 @@ function createMainWindow()
 
 
   /**
-   * Ouverture des liens externes.
+   * Bloque les ouvertures de fenêtres externes.
    */
-
   mainWindow.webContents.setWindowOpenHandler(
-    ({ url }) =>
-    {
-      if (
-        isExternalUrl(
-          url
-        )
-      )
-      {
-        shell.openExternal(
-          url
-        );
+    ({ url }) => {
+      if (isExternalUrl(url)) {
+        shell.openExternal(url);
       }
 
-
       return {
-        action:
-          'deny'
+        action: 'deny'
       };
     }
   );
@@ -420,47 +641,25 @@ function createMainWindow()
   /**
    * Bloque les navigations externes.
    */
-
   mainWindow.webContents.on(
     'will-navigate',
-    (
-      event,
-      url
-    ) =>
-    {
+    (event, url) => {
       const targetIsEntryFile =
-        url.startsWith(
-          'file://'
-        ) &&
-        url.includes(
-          'index.html'
-        );
-
+        url.startsWith('file://') &&
+        url.includes('index.html');
 
       const targetIsDevServer =
         IS_DEV &&
-        url.startsWith(
-          DEV_SERVER_URL
-        );
-
+        url.startsWith(DEV_SERVER_URL);
 
       if (
         !targetIsEntryFile &&
         !targetIsDevServer
-      )
-      {
+      ) {
         event.preventDefault();
 
-
-        if (
-          isExternalUrl(
-            url
-          )
-        )
-        {
-          shell.openExternal(
-            url
-          );
+        if (isExternalUrl(url)) {
+          shell.openExternal(url);
         }
       }
     }
@@ -469,88 +668,59 @@ function createMainWindow()
 
   mainWindow.on(
     'closed',
-    () =>
-    {
-      mainWindow =
-        null;
+    () => {
+      mainWindow = null;
     }
   );
 }
 
 
-function isExternalUrl(
-  url
-)
-{
-  return /^https?:\/\//i.test(
-    url
-  );
-}
+/* ============================================================================
+ * MENU APPLICATION
+ * ========================================================================== */
 
-
-/**
- * ---------------------------------------------------------------------------
- * Menu applicatif natif
- * ---------------------------------------------------------------------------
- */
-
-function buildApplicationMenu()
-{
-  /** @type {Electron.MenuItemConstructorOptions[]} */
-
-  const template =
-  [
+function buildApplicationMenu() {
+  const template = [
     ...(IS_MAC
       ? [
           {
-            label:
-              app.name,
+            label: app.name,
 
-            submenu:
-            [
+            submenu: [
               {
-                role:
-                  'about'
+                role: 'about'
               },
 
               {
-                type:
-                  'separator'
+                type: 'separator'
               },
 
               {
-                role:
-                  'services'
+                role: 'services'
               },
 
               {
-                type:
-                  'separator'
+                type: 'separator'
               },
 
               {
-                role:
-                  'hide'
+                role: 'hide'
               },
 
               {
-                role:
-                  'hideOthers'
+                role: 'hideOthers'
               },
 
               {
-                role:
-                  'unhide'
+                role: 'unhide'
               },
 
               {
-                type:
-                  'separator'
+                type: 'separator'
               },
 
               {
-                role:
-                  'quit'
+                role: 'quit'
               }
             ]
           }
@@ -558,295 +728,227 @@ function buildApplicationMenu()
       : []),
 
     {
-      label:
-        'Fichier',
+      label: 'Fichier',
 
-      submenu:
-      [
+      submenu: [
         {
           label:
             'Ouvrir le dossier de téléchargement',
 
-          click:
-            () =>
-            {
-              shell
-                .openPath(
-                  currentSettings.downloadFolder
-                )
-                .catch(
-                  () =>
-                  {
-                    dialog.showErrorBox(
-                      'Northcrest Launcher',
-                      "Le dossier de téléchargement n'a pas pu être ouvert."
-                    );
-                  }
-                );
-            }
+          click: () => {
+            shell
+              .openPath(
+                currentSettings.downloadFolder
+              )
+              .catch(
+                () => {
+                  dialog.showErrorBox(
+                    'Northcrest Launcher',
+                    "Le dossier de téléchargement n'a pas pu être ouvert."
+                  );
+                }
+              );
+          }
         },
 
         {
-          type:
-            'separator'
+          type: 'separator'
         },
 
         IS_MAC
           ? {
-              role:
-                'close'
+              role: 'close'
             }
           : {
-              role:
-                'quit'
+              role: 'quit'
             }
       ]
     },
 
     {
-      label:
-        'Édition',
+      label: 'Édition',
 
-      submenu:
-      [
+      submenu: [
         {
-          role:
-            'undo'
+          role: 'undo'
         },
 
         {
-          role:
-            'redo'
+          role: 'redo'
         },
 
         {
-          type:
-            'separator'
+          type: 'separator'
         },
 
         {
-          role:
-            'cut'
+          role: 'cut'
         },
 
         {
-          role:
-            'copy'
+          role: 'copy'
         },
 
         {
-          role:
-            'paste'
+          role: 'paste'
         },
 
         {
-          role:
-            'selectAll'
+          role: 'selectAll'
         }
       ]
     },
 
     {
-      label:
-        'Affichage',
+      label: 'Affichage',
 
-      submenu:
-      [
+      submenu: [
         {
-          role:
-            'reload'
+          role: 'reload'
         },
 
         {
-          role:
-            'forceReload'
+          role: 'forceReload'
         },
 
         {
-          role:
-            'toggleDevTools'
+          role: 'toggleDevTools'
         },
 
         {
-          type:
-            'separator'
+          type: 'separator'
         },
 
         {
-          role:
-            'resetZoom'
+          role: 'resetZoom'
         },
 
         {
-          role:
-            'zoomIn'
+          role: 'zoomIn'
         },
 
         {
-          role:
-            'zoomOut'
+          role: 'zoomOut'
         },
 
         {
-          type:
-            'separator'
+          type: 'separator'
         },
 
         {
-          role:
-            'togglefullscreen'
+          role: 'togglefullscreen'
         }
       ]
     },
 
     {
-      label:
-        'Aide',
+      label: 'Aide',
 
-      submenu:
-      [
+      submenu: [
         {
           label:
             'À propos de Northcrest Launcher',
 
-          click:
-            () =>
-            {
+          click: () => {
+            dialog.showMessageBox(
+              mainWindow,
+              {
+                type: 'info',
+
+                title:
+                  'Northcrest Launcher',
+
+                message:
+                  'Northcrest Launcher',
+
+                detail:
+                  `Version ${app.getVersion()}\nNorthcrest Entertainment © ${new Date().getFullYear()}`
+              }
+            );
+          }
+        },
+
+        {
+          label:
+            'Vérifier les mises à jour',
+
+          click: async () => {
+            const result =
+              await checkForUpdates();
+
+            if (!result.success) {
+              if (
+                result.reason ===
+                'disabled'
+              ) {
+                dialog.showMessageBox(
+                  mainWindow,
+                  {
+                    type: 'info',
+                    title:
+                      'Northcrest Launcher',
+                    message:
+                      'Les mises à jour automatiques sont désactivées.'
+                  }
+                );
+              }
+
+              return;
+            }
+
+            if (
+              !result.updateAvailable
+            ) {
               dialog.showMessageBox(
                 mainWindow,
                 {
-                  type:
-                    'info',
-
+                  type: 'info',
                   title:
                     'Northcrest Launcher',
-
                   message:
-                    'Northcrest Launcher',
-
-                  detail:
-                    `Version ${app.getVersion()}\nNorthcrest Entertainment © ${new Date().getFullYear()}`
+                    'Northcrest Launcher est déjà à jour.'
                 }
               );
             }
+          }
         },
 
         {
           label:
             'Site officiel',
 
-          click:
-            () =>
-            {
-              shell.openExternal(
-                'https://www.northcrest-entertainment.com'
-              );
-            }
+          click: () => {
+            shell.openExternal(
+              'https://www.northcrest-entertainment.com'
+            );
+          }
         }
       ]
     }
   ];
-
 
   const menu =
     Menu.buildFromTemplate(
       template
     );
 
-
-  Menu.setApplicationMenu(
-    menu
-  );
+  Menu.setApplicationMenu(menu);
 }
 
 
-/**
- * ---------------------------------------------------------------------------
- * Recherche et lancement des jeux
- * ---------------------------------------------------------------------------
- */
+/* ============================================================================
+ * IPC
+ * ========================================================================== */
 
-/**
- * Build locale Unreal — développement.
- */
+function registerIpcHandlers() {
 
-const DEVELOPMENT_GAME_DIRECTORY =
-  'C:\\Users\\stan4\\OneDrive\\Documents\\Unreal Projects\\GothamCity 5.7\\Saved\\NorthcrestBuilds\\Development\\Windows';
-
-
-function getBlackBridgeDirectory()
-{
-  if (IS_DEV)
-  {
-    return DEVELOPMENT_GAME_DIRECTORY;
-  }
-
-
-  return path.join(
-    currentSettings.downloadFolder,
-    'BlackBridge'
-  );
-}
-
-
-function getBlackBridgeExecutable()
-{
-  return path.join(
-    getBlackBridgeDirectory(),
-    'Northcrest.exe'
-  );
-}
-
-
-function isBlackBridgeInstalled()
-{
-  return fs.existsSync(
-    getBlackBridgeExecutable()
-  );
-}
-
-
-/**
- * ---------------------------------------------------------------------------
- * Validation du code de lancement Northcrest
- * ---------------------------------------------------------------------------
- */
-
-function isValidLaunchCode(
-  launchCode
-)
-{
-  if (
-    typeof launchCode !==
-    'string'
-  )
-  {
-    return false;
-  }
-
-
-  return /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(
-    launchCode
-  );
-}
-
-
-/**
- * ---------------------------------------------------------------------------
- * Canaux IPC
- * ---------------------------------------------------------------------------
- */
-
-function registerIpcHandlers()
-{
-  // -------------------------------------------------------------------------
-  // Fenêtre
-  // -------------------------------------------------------------------------
+  /* --------------------------------------------------------------------------
+   * FENÊTRE
+   * ------------------------------------------------------------------------ */
 
   ipcMain.handle(
     'window:minimize',
-    () =>
-    {
+    () => {
       mainWindow?.minimize();
     }
   );
@@ -854,22 +956,14 @@ function registerIpcHandlers()
 
   ipcMain.handle(
     'window:toggle-maximize',
-    () =>
-    {
-      if (!mainWindow)
-      {
+    () => {
+      if (!mainWindow) {
         return;
       }
 
-
-      if (
-        mainWindow.isMaximized()
-      )
-      {
+      if (mainWindow.isMaximized()) {
         mainWindow.unmaximize();
-      }
-      else
-      {
+      } else {
         mainWindow.maximize();
       }
     }
@@ -878,8 +972,7 @@ function registerIpcHandlers()
 
   ipcMain.handle(
     'window:close',
-    () =>
-    {
+    () => {
       mainWindow?.close();
     }
   );
@@ -887,8 +980,7 @@ function registerIpcHandlers()
 
   ipcMain.handle(
     'window:is-maximized',
-    () =>
-    {
+    () => {
       return mainWindow
         ? mainWindow.isMaximized()
         : false;
@@ -896,14 +988,13 @@ function registerIpcHandlers()
   );
 
 
-  // -------------------------------------------------------------------------
-  // Application
-  // -------------------------------------------------------------------------
+  /* --------------------------------------------------------------------------
+   * APPLICATION
+   * ------------------------------------------------------------------------ */
 
   ipcMain.handle(
     'app:get-version',
-    () =>
-    {
+    () => {
       return app.getVersion();
     }
   );
@@ -911,21 +1002,19 @@ function registerIpcHandlers()
 
   ipcMain.handle(
     'app:get-platform',
-    () =>
-    {
+    () => {
       return process.platform;
     }
   );
 
 
-  // -------------------------------------------------------------------------
-  // Préférences
-  // -------------------------------------------------------------------------
+  /* --------------------------------------------------------------------------
+   * SETTINGS
+   * ------------------------------------------------------------------------ */
 
   ipcMain.handle(
     'settings:get-all',
-    () =>
-    {
+    () => {
       return currentSettings;
     }
   );
@@ -936,19 +1025,39 @@ function registerIpcHandlers()
     (
       _event,
       partialSettings
-    ) =>
-    {
-      currentSettings =
-      {
+    ) => {
+
+      currentSettings = {
         ...currentSettings,
         ...partialSettings
       };
-
 
       const success =
         saveSettings(
           currentSettings
         );
+
+
+      nativeTheme.themeSource =
+        currentSettings.theme ===
+        'light'
+          ? 'light'
+          : 'dark';
+
+
+      if (
+        mainWindow &&
+        currentSettings.displayMode
+      ) {
+        if (
+          currentSettings.displayMode ===
+          'fullscreen'
+        ) {
+          mainWindow.setFullScreen(true);
+        } else {
+          mainWindow.setFullScreen(false);
+        }
+      }
 
 
       return {
@@ -963,10 +1072,9 @@ function registerIpcHandlers()
 
   ipcMain.handle(
     'settings:choose-download-folder',
-    async () =>
-    {
-      if (!mainWindow)
-      {
+    async () => {
+
+      if (!mainWindow) {
         return null;
       }
 
@@ -981,8 +1089,7 @@ function registerIpcHandlers()
             defaultPath:
               currentSettings.downloadFolder,
 
-            properties:
-            [
+            properties: [
               'openDirectory',
               'createDirectory'
             ]
@@ -993,8 +1100,7 @@ function registerIpcHandlers()
       if (
         result.canceled ||
         result.filePaths.length === 0
-      )
-      {
+      ) {
         return null;
       }
 
@@ -1017,48 +1123,40 @@ function registerIpcHandlers()
   );
 
 
-  // -------------------------------------------------------------------------
-  // Liens externes
-  // -------------------------------------------------------------------------
+  /* --------------------------------------------------------------------------
+   * SHELL
+   * ------------------------------------------------------------------------ */
 
   ipcMain.handle(
     'shell:open-external',
     (
       _event,
       url
-    ) =>
-    {
-      if (
-        isExternalUrl(
-          url
-        )
-      )
-      {
-        shell.openExternal(
-          url
-        );
+    ) => {
 
+      if (
+        isExternalUrl(url)
+      ) {
+        shell.openExternal(url);
 
         return true;
       }
-
 
       return false;
     }
   );
 
 
-  // -------------------------------------------------------------------------
-  // Session locale temporaire
-  // -------------------------------------------------------------------------
+  /* --------------------------------------------------------------------------
+   * AUTH
+   * ------------------------------------------------------------------------ */
 
   ipcMain.handle(
     'auth:get-session',
-    () =>
-    {
+    () => {
+
       return {
-        authenticated:
-          true,
+        authenticated: true,
 
         id:
           'NCR-884271',
@@ -1079,14 +1177,14 @@ function registerIpcHandlers()
   );
 
 
-  // -------------------------------------------------------------------------
-  // Bibliothèque locale temporaire
-  // -------------------------------------------------------------------------
+  /* --------------------------------------------------------------------------
+   * GAMES
+   * ------------------------------------------------------------------------ */
 
   ipcMain.handle(
     'games:get-library',
-    () =>
-    {
+    () => {
+
       const installed =
         isBlackBridgeInstalled();
 
@@ -1118,9 +1216,9 @@ function registerIpcHandlers()
   );
 
 
-  // -------------------------------------------------------------------------
-  // Lancement de BlackBridge
-  // -------------------------------------------------------------------------
+  /* --------------------------------------------------------------------------
+   * LAUNCH BLACKBRIDGE
+   * ------------------------------------------------------------------------ */
 
   ipcMain.handle(
     'games:launch',
@@ -1128,27 +1226,23 @@ function registerIpcHandlers()
       _event,
       gameId,
       launchCode
-    ) =>
-    {
+    ) => {
+
       console.log(
         `[Northcrest] Demande de lancement pour : ${gameId}`
       );
 
 
-      /**
-       * ------------------------------------------------------
+      /* ----------------------------------------------------------------------
        * Vérification du jeu
-       * ------------------------------------------------------
-       */
+       * -------------------------------------------------------------------- */
 
       if (
         gameId !==
         'cmk8r4x7p0000qz9v5n2m6t1a'
-      )
-      {
+      ) {
         return {
-          launched:
-            false,
+          launched: false,
 
           gameId,
 
@@ -1161,29 +1255,23 @@ function registerIpcHandlers()
       }
 
 
-      /**
-       * ------------------------------------------------------
-       * Vérification du code de lancement
-       * ------------------------------------------------------
-       *
-       * Le jeu ne doit jamais être lancé depuis le Launcher
-       * sans une LauncherSession valide.
-       */
+      /* ----------------------------------------------------------------------
+       * Vérification du ticket
+       * -------------------------------------------------------------------- */
 
       if (
         !isValidLaunchCode(
           launchCode
         )
-      )
-      {
+      ) {
+
         console.error(
-          '[Northcrest] Code de lancement Northcrest invalide ou absent.'
+          '[Northcrest] Code de lancement invalide ou absent.'
         );
 
 
         return {
-          launched:
-            false,
+          launched: false,
 
           gameId,
 
@@ -1221,26 +1309,23 @@ function registerIpcHandlers()
       );
 
 
-      /**
-       * ------------------------------------------------------
-       * Vérification de l'installation
-       * ------------------------------------------------------
-       */
+      /* ----------------------------------------------------------------------
+       * Installation
+       * -------------------------------------------------------------------- */
 
       if (
         !fs.existsSync(
           executablePath
         )
-      )
-      {
+      ) {
+
         console.log(
           '[Northcrest] BlackBridge.exe introuvable.'
         );
 
 
         return {
-          launched:
-            false,
+          launched: false,
 
           gameId,
 
@@ -1256,26 +1341,13 @@ function registerIpcHandlers()
       }
 
 
-      /**
-       * ------------------------------------------------------
-       * Lancement du jeu
-       * ------------------------------------------------------
-       *
-       * IMPORTANT :
-       *
-       * Nous ne transmettons jamais :
-       *
-       * - accessToken
-       * - refreshToken
-       * - mot de passe
-       *
-       * Le jeu reçoit uniquement le code temporaire
-       * de LauncherSession.
-       */
+      /* ----------------------------------------------------------------------
+       * Lancement
+       * -------------------------------------------------------------------- */
 
-      try
-      {
-        const GameProcess =
+      try {
+
+        const gameProcess =
           spawn(
             executablePath,
             [
@@ -1298,26 +1370,25 @@ function registerIpcHandlers()
           );
 
 
-        GameProcess.unref();
+        gameProcess.unref();
 
 
         console.log(
-          `[Northcrest] BlackBridge lancé avec succès. PID : ${GameProcess.pid}`
+          `[Northcrest] BlackBridge lancé avec succès. PID : ${gameProcess.pid}`
         );
 
 
         return {
-          launched:
-            true,
+          launched: true,
 
           gameId,
 
           pid:
-            GameProcess.pid
+            gameProcess.pid
         };
-      }
-      catch (error)
-      {
+
+      } catch (error) {
+
         console.error(
           '[Northcrest] Impossible de lancer BlackBridge.',
           error
@@ -1325,8 +1396,7 @@ function registerIpcHandlers()
 
 
         return {
-          launched:
-            false,
+          launched: false,
 
           gameId,
 
@@ -1339,18 +1409,41 @@ function registerIpcHandlers()
       }
     }
   );
+
+
+  /* --------------------------------------------------------------------------
+   * AUTO UPDATE
+   * ------------------------------------------------------------------------ */
+
+  ipcMain.handle(
+    'updater:check',
+    async () => {
+      return await checkForUpdates();
+    }
+  );
+
+
+  ipcMain.handle(
+    'updater:install',
+    () => {
+      return installUpdate();
+    }
+  );
 }
 
 
-/**
- * ---------------------------------------------------------------------------
- * Cycle de vie de l'application
- * ---------------------------------------------------------------------------
- */
+/* ============================================================================
+ * LIFECYCLE ELECTRON
+ * ========================================================================== */
 
 app.whenReady().then(
-  () =>
-  {
+  () => {
+
+    console.log(
+      '[Northcrest] Démarrage du Launcher...'
+    );
+
+
     currentSettings =
       loadSettings();
 
@@ -1371,15 +1464,21 @@ app.whenReady().then(
     createMainWindow();
 
 
+    /**
+     * Configure l'auto-update après
+     * création de la fenêtre.
+     */
+    setupAutoUpdater();
+
+
     app.on(
       'activate',
-      () =>
-      {
+      () => {
+
         if (
-          BrowserWindow.getAllWindows().length ===
-          0
-        )
-        {
+          BrowserWindow.getAllWindows()
+            .length === 0
+        ) {
           createMainWindow();
         }
       }
@@ -1388,40 +1487,59 @@ app.whenReady().then(
 );
 
 
+/* ============================================================================
+ * FERMETURE
+ * ========================================================================== */
+
 app.on(
   'window-all-closed',
-  () =>
-  {
-    if (
-      !IS_MAC
-    )
-    {
+  () => {
+
+    if (!IS_MAC) {
       app.quit();
     }
   }
 );
 
 
-/**
- * ---------------------------------------------------------------------------
- * Sécurité WebContents
- * ---------------------------------------------------------------------------
- */
+/* ============================================================================
+ * SÉCURITÉ WEBCONTENTS
+ * ========================================================================== */
 
 app.on(
   'web-contents-created',
   (
     _event,
     contents
-  ) =>
-  {
+  ) => {
+
     contents.on(
       'will-attach-webview',
       (
         event
-      ) =>
-      {
+      ) => {
+
         event.preventDefault();
+      }
+    );
+
+
+    /**
+     * Empêche les ouvertures de DevTools
+     * provenant du contenu distant.
+     */
+    contents.on(
+      'will-navigate',
+      (
+        event,
+        url
+      ) => {
+
+        if (
+          isExternalUrl(url)
+        ) {
+          event.preventDefault();
+        }
       }
     );
   }

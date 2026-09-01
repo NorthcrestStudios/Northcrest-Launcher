@@ -210,7 +210,7 @@ export function HomePage({
     try {
       if (window.northcrest) {
         const Result =
-          await window.northcrest.games.launch(
+          await gamesService.launchGame(
             BlackBridge.Id
           );
 
@@ -604,18 +604,8 @@ export function GamesPage() {
     game: Game
   ) {
     try {
-      if (!window.northcrest) {
-        notify(
-          'Le moteur de lancement Northcrest est indisponible.',
-          'Erreur',
-          false
-        );
-
-        return;
-      }
-
       const Result =
-        await window.northcrest.games.launch(
+        await gamesService.launchGame(
           game.Id
         );
 

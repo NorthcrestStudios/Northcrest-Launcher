@@ -56,7 +56,12 @@ export function Progress({ value, paused = false, thin = false }: {
 }
 
 export const PRESENCE_LABEL: Record<Presence, string> = {
-  ingame: 'En jeu', online: 'En ligne', away: 'Absent', offline: 'Hors ligne',
+  ingame: 'En jeu',
+  online: 'En ligne',
+  away: 'Absent',
+  dnd: 'Ne pas déranger',
+  invisible: 'Invisible',
+  offline: 'Hors ligne',
 };
 
 /* ------------------------------------------------------------------
